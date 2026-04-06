@@ -1,0 +1,74 @@
+name: Auto Check SUSFS Sync
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+jobs:
+  check-and-trigger:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Check Update and Extract Hash
+        id: check
+        run: |
+          RESPONSE=$(curl -s "https://gitlab.com/api/v4/projects/simonpunk%2Fsusfs4ksu/repository/branches/gki-android12-5.10")
+          GL_COMMIT_ID=$(echo $RESPONSE | jq -r '.commit.id')
+          GL_COMMIT_TITLE=$(echo $RESPONSE | jq -r '.commit.title')
+          GL_COMMIT_MSG=$(echo $RESPONSE | jq -r '.commit.message')
+          
+          echo "latest GitLab commit: $GL_COMMIT_TITLE ($GL_COMMIT_ID)"
+
+          KSU_HASH=$(echo "$GL_COMMIT_MSG" | grep -oE 'https://github.com/tiann/KernelSU/commit/[0-9a-f]{40}' | cut -d'/' -f7 | head -n1)
+          
+          if [ -z "$KSU_HASH" ]; then
+            echo "isn't sync/can't find commit hash, skipping"
+            echo "TRIGGER_BUILD=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          LAST_ID_FILE="last_susfs_commit.txt"
+          LAST_ID=""
+          if [ -f "$LAST_ID_FILE" ]; then
+            LAST_ID=$(cat "$LAST_ID_FILE")
+          fi
+          
+          if [ "$GL_COMMIT_ID" == "$LAST_ID" ]; then
+            echo "ℹ️ same commit ($GL_COMMIT_ID) skipping"
+            echo "TRIGGER_BUILD=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "✅ new sync:KernelSU Hash: $KSU_HASH"
+          echo "TRIGGER_BUILD=true" >> $GITHUB_OUTPUT
+          echo "GL_COMMIT_ID=$GL_COMMIT_ID" >> $GITHUB_OUTPUT
+          echo "KSU_HASH=$KSU_HASH" >> $GITHUB_OUTPUT
+
+
+      - name: Trigger Compilations
+        if: steps.check.outputs.TRIGGER_BUILD == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.MY_GH_TOKEN }}
+        run: |
+          KSU_HASH=${{ steps.check.outputs.KSU_HASH }}
+          
+          gh workflow run build-gki-5.10-ksu-susfs.yml -f KSU_EXPECTED_COMMIT=$KSU_HASH
+          
+          gh workflow run build-ksu-manager.yml -f COMMIT_HASH=$KSU_HASH
+
+      - name: Save State
+        if: steps.check.outputs.TRIGGER_BUILD == 'true'
+        run: |
+          git config --global user.name "Github Action Bot"
+          git config --global user.email "bot@github.com"
+          echo "${{ steps.check.outputs.GL_COMMIT_ID }}" > last_susfs_commit.txt
+          git add last_susfs_commit.txt
+          git commit -m "Auto-update: Record SUSFS sync commit"
+          git push

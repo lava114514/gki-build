@@ -1,0 +1,101 @@
+name: Build GKI 5.10 with KSU & SUSFS
+
+on:
+  workflow_dispatch:
+    inputs:
+      KERNEL_BRANCH:
+        description: 'GKI 分支 (默认: common-android12-5.10)'
+        required: true
+        default: 'common-android12-5.10'
+      KSU_VERSION:
+        description: 'KernelSU 分支或标签 (通常填 main)'
+        required: true
+        default: 'main'
+      KSU_EXPECTED_COMMIT:
+        description: 'KernelSU Commit Hash (用于匹配 SUSFS 补丁)'
+        required: true
+        default: '08378e555f203f50d91cefee319ca33e2732a3ff'
+      SUSFS_VERSION:
+        description: 'SUSFS 分支 (默认: gki-android12-5.10)'
+        required: true
+        default: 'gki-android12-5.10'
+
+jobs:
+  build-kernel:
+    name: Build Kernel
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Free Disk Space
+      uses: jlumbroso/free-disk-space@main
+      with:
+        tool-cache: true
+        android: true
+        dotnet: true
+        haskell: true
+        large-packages: true
+        docker-images: true
+        swap-storage: true
+
+    - name: Setup Build Environment
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential bc curl git python3 rsync zip unzip
+        mkdir -p ~/bin
+        curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+        chmod a+x ~/bin/repo
+        echo "$HOME/bin" >> $GITHUB_PATH
+
+    - name: Initialize & Sync GKI Source
+      run: |
+        mkdir -p workspace
+        cd workspace
+        git config --global user.name "GitHub Action"
+        git config --global user.email "action@github.com"
+        
+        repo init -u https://android.googlesource.com/kernel/manifest -b ${{ github.event.inputs.KERNEL_BRANCH }} --depth=1
+        repo sync -c -j$(nproc) --no-tags --no-clone-bundle --optimized-fetch --prune
+        
+        rm -rf .repo/
+
+    - name: Setup KernelSU
+      run: |
+        cd workspace/common
+        curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s ${{ github.event.inputs.KSU_VERSION }}
+        
+        cd KernelSU
+        git checkout ${{ github.event.inputs.KSU_EXPECTED_COMMIT }}
+
+    - name: Setup SUSFS and Apply Patches
+      run: |
+        cd workspace
+        git clone https://gitlab.com/simonpunk/susfs4ksu.git -b ${{ github.event.inputs.SUSFS_VERSION }} susfs4ksu --depth=1
+        cp susfs4ksu/kernel_patches/fs/susfs.c common/fs/
+        cp susfs4ksu/kernel_patches/include/linux/susfs_def.h common/include/linux/
+        cp susfs4ksu/kernel_patches/include/linux/susfs.h common/include/linux/
+        
+        cd common/KernelSU
+        patch -p1 < ../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch
+        cd ..
+        
+        patch -p1 < ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch
+        
+        cd ..
+        rm -rf susfs4ksu/
+
+    - name: Build Kernel (build.sh for 5.10)
+      run: |
+        cd workspace
+        LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
+
+    - name: Upload Kernel Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: GKI-5.10-KSU-SUSFS-${{ github.event.inputs.KERNEL_BRANCH }}
+        path: |
+          workspace/out/*/dist/Image
+          workspace/out/*/dist/boot.img
+          workspace/out/*/dist/*.ko

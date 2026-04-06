@@ -1,0 +1,56 @@
+name: Build KernelSU Manager
+
+on:
+  workflow_dispatch:
+    inputs:
+      COMMIT_HASH:
+        description: '填入KernelSU Commit Hash'
+        required: true
+        default: '08378e555f203f50d91cefee319ca33e2732a3ff'
+
+jobs:
+  build-manager:
+    name: Build Manager APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout KernelSU Repo
+        uses: actions/checkout@v4
+        with:
+          repository: tiann/KernelSU
+          ref: ${{ github.event.inputs.COMMIT_HASH }}
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup Java Environment
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '21'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk
+
+      - name: Build ksud
+        run: |
+          cargo ndk -t arm64-v8a build --release
+          
+          mkdir -p manager/app/src/main/jniLibs/arm64-v8a/
+          cp target/aarch64-linux-android/release/ksud manager/app/src/main/jniLibs/arm64-v8a/libksud.so
+
+      - name: Build Manager APK
+        run: |
+          cd manager
+          chmod +x ./gradlew
+          ./gradlew :app:assembleDebug
+
+      - name: Upload Manager APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: KSU-Manager-${{ github.event.inputs.COMMIT_HASH }}
+          path: manager/app/build/outputs/apk/debug/*.apk
