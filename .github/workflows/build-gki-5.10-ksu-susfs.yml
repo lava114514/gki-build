@@ -24,7 +24,8 @@ jobs:
   build-kernel:
     name: Build Kernel
     runs-on: ubuntu-latest
-    
+    permissions:
+      contents: write
     steps:
     - name: Checkout Repository
       uses: actions/checkout@v4
@@ -99,3 +100,21 @@ jobs:
           workspace/out/*/dist/Image
           workspace/out/*/dist/boot.img
           workspace/out/*/dist/*.ko
+
+    - name: Create Release and Upload Assets
+      uses: softprops/action-gh-release@v2
+      if: github.event_name == 'workflow_dispatch'
+      with:
+        tag_name: KSU_${{ github.event.inputs.KSU_EXPECTED_COMMIT }}
+        name: KernelSU SUSFS Build - ${{ github.event.inputs.KSU_EXPECTED_COMMIT }}
+        body: |
+          ### 自动编译
+          - **KernelSU Commit:** `${{ github.event.inputs.KSU_EXPECTED_COMMIT }}`
+          - **GKI Branch:** `${{ github.event.inputs.KERNEL_BRANCH }}`
+          - **SUSFS Branch:** `${{ github.event.inputs.SUSFS_VERSION }}`
+        files: |
+          workspace/out/*/dist/Image
+          workspace/out/*/dist/boot.img
+          workspace/out/*/dist/*.ko
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

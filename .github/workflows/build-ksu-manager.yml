@@ -12,6 +12,8 @@ jobs:
   build-manager:
     name: Build Manager APK
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout KernelSU Repo
@@ -39,7 +41,7 @@ jobs:
       - name: Build ksud
         run: |
           cargo ndk -t arm64-v8a build --release
-          
+
           mkdir -p manager/app/src/main/jniLibs/arm64-v8a/
           cp target/aarch64-linux-android/release/ksud manager/app/src/main/jniLibs/arm64-v8a/libksud.so
 
@@ -54,3 +56,16 @@ jobs:
         with:
           name: KSU-Manager-${{ github.event.inputs.COMMIT_HASH }}
           path: manager/app/build/outputs/apk/debug/*.apk
+
+      - name: Create Release and Upload APK
+        uses: softprops/action-gh-release@v2
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          tag_name: KSU_${{ github.event.inputs.COMMIT_HASH }}
+          name: KernelSU SUSFS Build - ${{ github.event.inputs.COMMIT_HASH }}
+          body: |
+            ### 自动编译
+            - **KernelSU Commit:** `${{ github.event.inputs.COMMIT_HASH }}`
+          files: manager/app/build/outputs/apk/debug/*.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
