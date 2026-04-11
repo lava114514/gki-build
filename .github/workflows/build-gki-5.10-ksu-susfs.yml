@@ -56,17 +56,17 @@ jobs:
         cd workspace
         git config --global user.name "GitHub Action"
         git config --global user.email "action@github.com"
-        
+
         repo init -u https://android.googlesource.com/kernel/manifest -b ${{ github.event.inputs.KERNEL_BRANCH }} --depth=1
         repo sync -c -j$(nproc) --no-tags --no-clone-bundle --optimized-fetch --prune
-        
+
         rm -rf .repo/
 
     - name: Setup KernelSU
       run: |
         cd workspace/common
         curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s ${{ github.event.inputs.KSU_VERSION }}
-        
+
         cd KernelSU
         git checkout ${{ github.event.inputs.KSU_EXPECTED_COMMIT }}
 
@@ -77,28 +77,28 @@ jobs:
         cp susfs4ksu/kernel_patches/fs/susfs.c common/fs/
         cp susfs4ksu/kernel_patches/include/linux/susfs_def.h common/include/linux/
         cp susfs4ksu/kernel_patches/include/linux/susfs.h common/include/linux/
-        
+
         cd common/KernelSU
         patch -p1 < ../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch
         cd ..
-        
+
         patch -p1 < ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch
-        
+
         cd ..
         rm -rf susfs4ksu/
 
-    - name: Build Kernel (build.sh for 5.10)
+    - name: Build Kernel
       run: |
         cd workspace
-        BUILD_BOOT_IMG=1 LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
+        BUILD_BOOT_IMG=1 SKIP_VENDOR_BOOT=1 KERNEL_BINARY=Image LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
 
     - name: Upload Kernel Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: GKI-5.10-KSU-SUSFS-${{ github.event.inputs.KERNEL_BRANCH }}
+        name: GKI-5.10-KSU-SUSFS-Artifacts
         path: |
           workspace/out/*/dist/Image
-          workspace/out/*/dist/boot.img
+          workspace/out/*/dist/boot*.img
           workspace/out/*/dist/*.ko
 
     - name: Create Release and Upload Assets
@@ -108,13 +108,15 @@ jobs:
         tag_name: KSU_${{ github.event.inputs.KSU_EXPECTED_COMMIT }}
         name: KernelSU SUSFS Build - ${{ github.event.inputs.KSU_EXPECTED_COMMIT }}
         body: |
-          ### 自动编译
           - **KernelSU Commit:** `${{ github.event.inputs.KSU_EXPECTED_COMMIT }}`
+          - **KernelSU Version:** `${{ github.event.inputs.KSU_EXPECTED_COMMIT }}`
           - **GKI Branch:** `${{ github.event.inputs.KERNEL_BRANCH }}`
+          - **Kernel Branch:** `${{ github.event.inputs.KERNEL_BRANCH }}`
           - **SUSFS Branch:** `${{ github.event.inputs.SUSFS_VERSION }}`
+
         files: |
           workspace/out/*/dist/Image
-          workspace/out/*/dist/boot.img
+          workspace/out/*/dist/boot*.img
           workspace/out/*/dist/*.ko
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
